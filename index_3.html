@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>2048</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;touch-action:none}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a12;color:#e0e8f0;min-height:100vh;display:flex;justify-content:center}
+#wrap{display:flex;flex-direction:column;gap:12px;padding:14px;width:100%;max-width:420px}
+#header{display:flex;align-items:center;justify-content:space-between}
+#title{font-size:26px;font-weight:700;color:#e0e8f0;letter-spacing:-0.5px}
+#scores{display:flex;gap:8px}
+.sbox{background:#141420;border:1px solid #232f3f;border-radius:10px;padding:6px 14px;text-align:center;min-width:70px}
+.slbl{font-size:10px;color:#5a7080;text-transform:uppercase;letter-spacing:.5px}
+.sval{font-size:17px;font-weight:700;color:#e0e8f0}
+#controls{display:flex;gap:8px}
+.cbtn{flex:1;padding:9px 6px;border-radius:10px;border:1px solid #232f3f;background:#141420;color:#8899aa;font-size:13px;font-weight:600;cursor:pointer}
+.cbtn:active{background:#0a0a12}
+.cbtn.ac{background:#001812;color:#00ffcc;border-color:#1a3a2a}
+.cbtn.on{background:#0a1800;color:#44cc66;border-color:#1a3a1a}
+select{flex:1;padding:9px 8px;border-radius:10px;border:1px solid #232f3f;background:#141420;color:#e0e8f0;font-size:13px;cursor:pointer;-webkit-appearance:none}
+#board-wrap{position:relative;width:100%;aspect-ratio:1;border-radius:14px;background:#141420;border:1px solid #1e2c3a;padding:8px}
+#grid{position:absolute;inset:8px;display:grid;gap:6px}
+.cbg{border-radius:8px;background:#0a0a12}
+#tiles{position:absolute;inset:8px}
+.tile{position:absolute;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;transition:left .1s ease,top .1s ease}
+.tile.tnew{animation:pop .15s ease}
+.tile.tmerge{animation:mrg .2s ease}
+@keyframes pop{0%{transform:scale(0)}100%{transform:scale(1)}}
+@keyframes mrg{0%{transform:scale(1)}50%{transform:scale(1.18)}100%{transform:scale(1)}}
+#overlay{position:absolute;inset:0;border-radius:14px;background:rgba(4,4,14,0.78);display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+#overlay.show{display:flex}
+#ov-title{font-size:24px;font-weight:700;color:#fff}
+#ov-btn{padding:11px 28px;border-radius:10px;background:#00ffcc;color:#001812;font-size:15px;font-weight:700;cursor:pointer;border:none}
+#hint-bar{background:#0a1830;border:1px solid #1a3a5a;border-radius:10px;padding:9px 13px;font-size:13px;color:#5599cc;min-height:36px;display:flex;align-items:center}
+#ai-st{font-size:12px;color:#445566;text-align:center;min-height:16px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="header">
+    <div id="title">2048</div>
+    <div id="scores">
+      <div class="sbox"><div class="slbl">スコア</div><div class="sval" id="sc">0</div></div>
+      <div class="sbox"><div class="slbl">ベスト</div><div class="sval" id="bs">0</div></div>
+    </div>
+  </div>
+  <div id="controls">
+    <select id="ssel" onchange="chSz()">
+      <option value="4">4×4 標準</option>
+      <option value="5">5×5 広め</option>
+      <option value="6">6×6 難</option>
+    </select>
+    <button class="cbtn" onclick="newGame()">新規</button>
+    <button class="cbtn ac" id="hbtn" onclick="togHint()">ヒント</button>
+    <button class="cbtn" id="abtn" onclick="togAI()">AI</button>
+  </div>
+  <div id="board-wrap">
+    <div id="grid"></div>
+    <div id="tiles"></div>
+    <div id="overlay">
+      <div id="ov-title"></div>
+      <button id="ov-btn" onclick="newGame()">もう一度</button>
+    </div>
+  </div>
+  <div id="hint-bar">スワイプしてタイルを動かそう。同じ数字が合体して倍になる！</div>
+  <div id="ai-st"></div>
+  <div style="font-size:11px;color:#334455;text-align:center;padding-bottom:4px">上下左右にスワイプ ／ ヒント：AIが最善手を表示 ／ AI：自動プレイデモ</div>
+</div>
+
+<script>
+let N=4,board=[],score=0,best=0,hintOn=false,aiOn=false,aiTmr=null;
+const SV=JSON.parse(localStorage.getItem('2048v2')||'{}');
+
+const TC={
+  2:  ['#1a2a3a','#88bbcc'],
+  4:  ['#1a3a2a','#88cc99'],
+  8:  ['#2a2a10','#ccbb44'],
+  16: ['#3a2010','#cc8844'],
+  32: ['#3a1510','#cc6644'],
+  64: ['#3a0a0a','#cc4433'],
+  128:['#2a2a00','#ddcc33'],
+  256:['#1a2800','#bbdd22'],
+  512:['#002a1a','#22dd99'],
+  1024:['#001a2a','#2299dd'],
+  2048:['#1a002a','#aa44ff'],
+  4096:['#2a0015','#ff4488'],
+};
+const tcol=v=>{const c=TC[v];if(c)return c;return['#2a1a3a','#cc88ff'];};
+const fsz=v=>v<100?20:v<1000?16:v<10000?13:10;
+
+function initGrid(){
+  const g=document.getElementById('grid');
+  g.style.gridTemplateColumns=`repeat(${N},1fr)`;
+  g.innerHTML='';
+  for(let i=0;i<N*N;i++){const c=document.createElement('div');c.className='cbg';g.appendChild(c);}
+}
+
+function nb(){return Array.from({length:N},()=>Array(N).fill(0));}
+
+function addTile(b){
+  const em=[];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(!b[r][c])em.push([r,c]);
+  if(!em.length)return null;
+  const[r,c]=em[~~(Math.random()*em.length)];
+  b[r][c]=Math.random()<0.9?2:4;
+  return[r,c];
+}
+
+function slide(row){
+  let a=row.filter(x=>x),s=0,mg=[];
+  for(let i=0;i<a.length-1;i++){
+    if(a[i]===a[i+1]&&!mg.includes(i)){a[i]*=2;s+=a[i];a.splice(i+1,1);mg.push(i);}
+  }
+  while(a.length<N)a.push(0);
+  return[a,s];
+}
+
+function moveDir(b,d){
+  let ns=0,ch=false,nb2=b.map(r=>[...r]);
+  if(d<2){
+    for(let r=0;r<N;r++){
+      let row=d===0?nb2[r]:[...nb2[r]].reverse();
+      const[sl,s]=slide(row);
+      if(d===1)sl.reverse();
+      if(sl.join()!==nb2[r].join())ch=true;
+      nb2[r]=sl;ns+=s;
+    }
+  } else {
+    for(let c=0;c<N;c++){
+      let col=nb2.map(r=>r[c]);
+      if(d===3)col.reverse();
+      const[sl,s]=slide(col);
+      if(d===3)sl.reverse();
+      for(let r=0;r<N;r++)if(sl[r]!==nb2[r][c]){ch=true;nb2[r][c]=sl[r];}
+      ns+=s;
+    }
+  }
+  return[nb2,ns,ch];
+}
+
+function canMove(b){
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    if(!b[r][c])return true;
+    if(c+1<N&&b[r][c]===b[r][c+1])return true;
+    if(r+1<N&&b[r][c]===b[r+1][c])return true;
+  }
+  return false;
+}
+
+function hasWon(b){for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(b[r][c]>=2048)return true;return false;}
+
+function eval2(b){
+  let s=0,em=0;
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(!b[r][c])em++;
+  s+=em*512;
+  let mx=0;
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(b[r][c]>mx)mx=b[r][c];
+  if(b[0][0]===mx)s+=mx*4;
+  const sn=[];
+  for(let r=0;r<N;r++){const row=r%2===0?[...Array(N).keys()]:[...Array(N).keys()].reverse();for(const c of row)sn.push(b[r][c]);}
+  for(let i=0;i<sn.length-1;i++)if(sn[i]>=sn[i+1])s+=sn[i];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    if(c+1<N&&b[r][c]&&b[r][c]===b[r][c+1])s+=b[r][c];
+    if(r+1<N&&b[r][c]&&b[r][c]===b[r+1][c])s+=b[r][c];
+  }
+  return s;
+}
+
+function exmax(b,dep,isMax){
+  if(dep===0)return eval2(b);
+  if(isMax){
+    let bv=-Infinity;
+    for(let d=0;d<4;d++){const[nb2,,ch]=moveDir(b,d);if(!ch)continue;const v=exmax(nb2,dep-1,false);if(v>bv)bv=v;}
+    return bv===-Infinity?eval2(b):bv;
+  } else {
+    const em=[];for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(!b[r][c])em.push([r,c]);
+    if(!em.length)return eval2(b);
+    let sum=0;
+    for(const[r,c]of em){
+      for(const[v,p]of[[2,0.9],[4,0.1]]){const nb2=b.map(row=>[...row]);nb2[r][c]=v;sum+=p*exmax(nb2,dep-1,true);}
+    }
+    return sum/em.length;
+  }
+}
+
+function bestMove(b){
+  const dep=N<=4?4:N<=5?3:2;
+  let bv=-Infinity,bd=0;
+  for(let d=0;d<4;d++){const[nb2,,ch]=moveDir(b,d);if(!ch)continue;const v=exmax(nb2,dep-1,false);if(v>bv){bv=v;bd=d;}}
+  return bd;
+}
+
+let tmap={};
+function render(np=null){
+  const el=document.getElementById('tiles');
+  const bw=document.getElementById('board-wrap').clientWidth-16;
+  const tw=(bw-(N-1)*6)/N,step=tw+6;
+  const seen=new Set();
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    const v=board[r][c];if(!v)continue;
+    const key=`${r},${c}`;seen.add(key);
+    let t=tmap[key];
+    if(!t){
+      t=document.createElement('div');t.className='tile';el.appendChild(t);tmap[key]=t;
+      if(np&&np[0]===r&&np[1]===c){t.classList.add('tnew');setTimeout(()=>t.classList.remove('tnew'),200);}
+    }
+    const[bg,fg]=tcol(v);
+    t.style.cssText=`left:${c*step}px;top:${r*step}px;width:${tw}px;height:${tw}px;background:${bg};color:${fg};font-size:${fsz(v)}px;`;
+    t.textContent=v;
+    if(hintOn){
+      const d=bestMove(board);
+      const[nb2]=moveDir(board,d);
+      let wm=false;
+      for(let rr=0;rr<N&&!wm;rr++)for(let cc=0;cc<N&&!wm;cc++)
+        if(nb2[rr][cc]===v&&(rr!==r||cc!==c))wm=true;
+      t.style.outline=wm?'2.5px solid #00ffcc':'none';
+      t.style.outlineOffset='-2.5px';
+    } else {t.style.outline='none';}
+  }
+  for(const k of Object.keys(tmap))if(!seen.has(k)){tmap[k].remove();delete tmap[k];}
+  document.getElementById('sc').textContent=score.toLocaleString();
+  if(score>best){best=score;SV['b'+N]=best;localStorage.setItem('2048v2',JSON.stringify(SV));}
+  document.getElementById('bs').textContent=best.toLocaleString();
+  updHint();
+}
+
+const DNAME=['上','下','左','右'];
+function updHint(){
+  const hb=document.getElementById('hint-bar');
+  if(!hintOn){hb.textContent='スワイプしてタイルを動かそう。同じ数字が合体して倍になる！';return;}
+  const d=bestMove(board);
+  const dep=N<=4?4:N<=5?3:2;
+  hb.innerHTML=`<strong style="color:#00ffcc">AI推奨: ${DNAME[d]}方向</strong><span style="color:#446688;margin-left:8px">Expectimax深度${dep}で計算</span>`;
+}
+
+function chSz(){N=parseInt(document.getElementById('ssel').value);best=SV['b'+N]||0;newGame();}
+
+function newGame(){
+  stopAI();
+  board=Array.from({length:N},()=>Array(N).fill(0));
+  addTile(board);addTile(board);
+  score=0;tmap={};
+  document.getElementById('tiles').innerHTML='';
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('ai-st').textContent='';
+  initGrid();render();
+}
+
+function togHint(){
+  hintOn=!hintOn;
+  const b=document.getElementById('hbtn');
+  b.className='cbtn'+(hintOn?' on':' ac');
+  b.textContent=hintOn?'ヒントON':'ヒント';
+  render();
+}
+
+function togAI(){if(aiOn)stopAI();else startAI();}
+
+function startAI(){
+  aiOn=true;
+  document.getElementById('abtn').className='cbtn on';
+  document.getElementById('abtn').textContent='AI停止';
+  document.getElementById('ai-st').textContent='AI自動プレイ中... (Expectimaxアルゴリズム)';
+  runAI();
+}
+
+function stopAI(){
+  aiOn=false;clearTimeout(aiTmr);
+  document.getElementById('abtn').className='cbtn';
+  document.getElementById('abtn').textContent='AI';
+  document.getElementById('ai-st').textContent='';
+}
+
+function runAI(){
+  if(!aiOn)return;
+  if(!canMove(board)||hasWon(board)){stopAI();return;}
+  doMove(bestMove(board));
+  aiTmr=setTimeout(runAI,200);
+}
+
+function doMove(d){
+  const[nb2,ns,ch]=moveDir(board,d);
+  if(!ch)return;
+  board=nb2;score+=ns;
+  const np=addTile(board);
+  render(np||undefined);
+  if(hasWon(board)){showOv('🎉 2048達成！');if(aiOn)stopAI();return;}
+  if(!canMove(board)){showOv('ゲームオーバー');if(aiOn)stopAI();}
+}
+
+function showOv(t){document.getElementById('ov-title').textContent=t;document.getElementById('overlay').classList.add('show');}
+
+// スワイプ
+let sx=0,sy=0;
+const bw=document.getElementById('board-wrap');
+bw.addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY;},{passive:true});
+bw.addEventListener('touchend',e=>{
+  if(aiOn)return;
+  const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;
+  if(Math.max(Math.abs(dx),Math.abs(dy))<20)return;
+  doMove(Math.abs(dx)>Math.abs(dy)?(dx<0?2:3):(dy<0?0:1));
+},{passive:true});
+bw.addEventListener('mousedown',e=>{sx=e.clientX;sy=e.clientY;});
+bw.addEventListener('mouseup',e=>{
+  if(aiOn)return;
+  const dx=e.clientX-sx,dy=e.clientY-sy;
+  if(Math.max(Math.abs(dx),Math.abs(dy))<15)return;
+  doMove(Math.abs(dx)>Math.abs(dy)?(dx<0?2:3):(dy<0?0:1));
+});
+document.addEventListener('keydown',e=>{
+  if(aiOn)return;
+  const m={ArrowUp:0,ArrowDown:1,ArrowLeft:2,ArrowRight:3};
+  if(m[e.key]!==undefined){e.preventDefault();doMove(m[e.key]);}
+});
+
+best=SV['b4']||0;
+newGame();
+</script>
+</body>
+</html>
